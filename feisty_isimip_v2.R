@@ -78,7 +78,7 @@ plot(annual_list_native[["2000"]], main = "FEISTY Biomass — Year 2000")
 
 
 ## ------------------------------------------ ##
-#    2) ReGrid : bilinear interpolation -----
+#    2) ReGrid : bilinear interpolation ----- not needed, skip to 3
 ## ------------------------------------------ ##
 feisty_stack <- rast(annual_list_native) # annual feisty data
 
@@ -100,8 +100,6 @@ length(latzoo)
 
 ## ZOOMSS IS ONE DEGREEEEEEEE
 
-
-## below not needed
 feisty_stars <- st_as_stars(feisty_stack) 
 zooms_stars <- st_as_stars(zooms)
 
@@ -112,11 +110,32 @@ feisty_5deg <- st_warp(feisty_stars, #annual time; another opt resample() fnctio
                        use_gdal = TRUE)
 
 plot(feisty_5deg[,,,1], main = "FEISTY Year 1950 (Warped to ZooMSS Grid)")
-
+#still one degree
 
 ## ------------------------------------------ ##
-#    2) Spatial aggregation -----
+#    3) LMEs -----
 ## ------------------------------------------ ##
+lme <- st_read("raw/lme66/LME66.shp")
+
+names(lme)
+head(lme)
+
+# we are using LME #s
+## 10 = HOTS
+## 14 = Patagonian Shelf
+## 21 = Norwegian Shelf
+## 28 = Guinea Current 
+
+lme_HOTS <- lme %>% 
+  filter(LME_NUMBER %in% c(10))
+lme_patagonia <- lme %>% 
+  filter(LME_NUMBER %in% c(14))
+lme_nor <- lme %>% 
+  filter(LME_NUMBER %in% c(21))
+lme_guinea <- lme %>% 
+  filter(LME_NUMBER %in% c(28))
+
+
 
 annual_weighted_means <- lapply(1:dim(src_resampled)[3], function(i) {
   exact_extract(src_resampled[,,,i], shape, 'weighted_mean')
