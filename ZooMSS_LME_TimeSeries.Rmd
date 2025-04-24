@@ -1,0 +1,162 @@
+---
+title: "CCE_Project"
+output: html_document
+date: "2025-04-24"
+---
+
+```{r setup, include=FALSE}
+library(stars)
+library(sf)
+library(exactextractr)
+library(raster) 
+library(dplyr)
+library(ggplot2)
+library(sp)
+```
+
+# Read in Data
+```{r}
+base_path <- "C:/Users/ocron/OneDrive - Massachusetts Institute of Technology/Documents/Classes/Spring_2025/Climate_Change_Ecology/Project"
+
+#ZooMSS total carbon biomass nc file
+tcb <- read_stars(paste0(base_path,"/zoomss_gfdl-esm4_nobasd_historical_nat_default_tcb_global_annual_1950_2014.nc"))
+
+# Large Marine Ecosystems shp
+lme <- st_read(paste0(base_path, "/LMEs/LME_SHP.shp"))
+```
+
+# Preprocessing
+```{r}
+#Nc file to raster
+tcb_raster <- as(tcb, "Raster")
+
+# Filter only LMEs of interest
+target_lmes <- c(10, 14, 21, 28)
+lme_subset <- lme %>% filter(LME_NUMBER %in% target_lmes)
+
+# Make sure they're in the right CRS
+crs(tcb_raster) <- st_crs(lme)$proj4string
+lme_subset <- st_transform(lme_subset, crs = crs(tcb_raster))
+```
+
+# Check raster extent and CRS
+```{r}
+print(extent(tcb_raster))
+print(crs(tcb_raster))
+```
+
+# Plot the raster and shapefile together
+```{r}
+plot(tcb_raster[[1]], main = "Raster and LME Overlay")
+plot(st_geometry(lme_subset), add = TRUE, border = "red", lwd = 2)
+```
+
+# Crop raster to one LME and check values
+```{r}
+lme_test <- lme_subset %>% filter(LME_NUMBER == 10)
+tcropped <- crop(tcb_raster, extent(lme_test))
+tmasked <- mask(tcropped, as(lme_test, "Spatial"))
+
+# Plot masked result
+plot(tmasked[[1]], main = "TCB values in LME 10")
+
+# Check summary of values
+summary(values(tmasked[[1]]))
+```
+
+# Clip to LME Extent (Weighted Mean, median, sd)
+```{r}
+extract_lme_timeseries <- function(rast, shape, start_year = 1950) {
+  n_years <- nlayers(rast)
+  years <- start_year:(start_year + n_years - 1)
+
+  out <- lapply(1:n_years, function(i) {
+    layer <- rast[[i]]
+    
+    # Extract values and coverage fractions as a dataframe
+    extract_df <- exact_extract(layer, shape)[[1]]
+    
+    # Remove NA values
+    extract_df <- extract_df[!is.na(extract_df$value), ]
+    if (nrow(extract_df) == 0) {
+      return(data.frame(Year = years[i], TCB_mean = NA, TCB_median = NA, TCB_sd = NA))
+    }
+
+    values <- extract_df$value
+    weights <- extract_df$coverage_fraction
+
+    # Weighted mean
+    w_mean <- sum(values * weights) / sum(weights)
+
+    # Weighted median (approximate method)
+    ord <- order(values)
+    values_ord <- values[ord]
+    weights_ord <- weights[ord]
+    cum_weights <- cumsum(weights_ord) / sum(weights_ord)
+    w_median <- values_ord[which.min(abs(cum_weights - 0.5))]
+
+    # Weighted standard deviation
+    w_var <- sum(weights * (values - w_mean)^2) / sum(weights)
+    w_sd <- sqrt(w_var)
+
+    data.frame(Year = years[i], TCB_mean = w_mean, TCB_median = w_median, TCB_sd = w_sd)
+  })
+
+  do.call(rbind, out)
+}
+
+```
+
+#Actually extract
+```{r}
+ts_10 <- extract_lme_timeseries(tcb_raster, lme_subset %>% filter(LME_NUMBER == 10)) %>% mutate(LME = "10")
+ts_14 <- extract_lme_timeseries(tcb_raster, lme_subset %>% filter(LME_NUMBER == 14)) %>% mutate(LME = "14")
+ts_21 <- extract_lme_timeseries(tcb_raster, lme_subset %>% filter(LME_NUMBER == 21)) %>% mutate(LME = "21")
+ts_28 <- extract_lme_timeseries(tcb_raster, lme_subset %>% filter(LME_NUMBER == 28)) %>% mutate(LME = "28")
+
+tcb_by_lme <- bind_rows(ts_10, ts_14, ts_21, ts_28)
+```
+
+# Plot Time Series of mean +- 1sd
+```{r}
+ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean)) +
+  geom_ribbon(aes(ymin = TCB_mean - TCB_sd, ymax = TCB_mean + TCB_sd, fill = LME), alpha = 0.2) +
+  geom_line(aes(color = LME), size = 1) +
+  facet_wrap(~ LME, ncol = 2, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Annual Total Community Biomass (Mean ± 1 SD) by LME",
+    x = "Year", y = "TCB"
+  ) +
+  ylim(-100, 700)+
+  theme(legend.position = "none")
+```
+# Plot time series of just mean
+```{r}
+ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean, color = LME)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(
+    title = "TCB Weighted Median by LME",
+    x = "Year", y = "Mean Total Community Biomass",
+    color = "LME"
+  )
+```
+
+# Plot time series of median
+```{r}
+ggplot(tcb_by_lme, aes(x = Year, y = TCB_median, color = LME)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  labs(
+    title = "TCB Weighted Median by LME",
+    x = "Year", y = "Median Total Community Biomass",
+    color = "LME"
+  )
+```
+
+# Export CSV
+```{r}
+write.csv(tcb_by_lme, paste0(base_path, "/Outputs/tcb_by_lme_timeseries.csv"), row.names = FALSE)
+
+```
