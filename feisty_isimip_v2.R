@@ -98,8 +98,10 @@ length(lonzoo)
 range(latzoo) # 1 degree spacing ;-89.5  89.5
 length(latzoo)
 
+## ZOOMSS IS ONE DEGREEEEEEEE
 
 
+## below not needed
 feisty_stars <- st_as_stars(feisty_stack) 
 zooms_stars <- st_as_stars(zooms)
 
