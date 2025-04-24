@@ -5,6 +5,7 @@
 ## by: Alexandra Cabanelas 
 ################################################################################
 # FEISTY data downloaded from ISIMIP repository on 24-APR-25
+# Looking at total consumer biomass = tcb
 
 ## ------------------------------------------ ##
 #            Packages -----
@@ -29,9 +30,10 @@ feisty <- nc_open("raw/feisty_gfdl-esm4_nobasd_historical_nat_default_tcb_global
 print(feisty)
 names(feisty$var)  
 feisty$var$tcb
+dim(ncvar_get(feisty, "tcb"))
 
 ## ------------------------------------------ ##
-#    1) Temporal aggregation -----
+#     Extract variables and coordinates -----
 ## ------------------------------------------ ##
 lon <- ncvar_get(feisty, "lon")     # 360
 lat <- ncvar_get(feisty, "lat")     # 180
@@ -41,6 +43,9 @@ ncatt_get(feisty, "time", "units")$value # "months since 1601-01-01"
 years <- floor(1601 + time / 12) 
 table(floor(years))
 
+## ------------------------------------------ ##
+#    1) Temporal aggregation -----
+## ------------------------------------------ ##
 annual_list_native <- list()
 
 for (yr in unique(years)) { 
@@ -73,27 +78,45 @@ plot(annual_list_native[["2000"]], main = "FEISTY Biomass — Year 2000")
 
 
 ## ------------------------------------------ ##
-#    2) Spatial aggregation -----
+#    2) ReGrid : bilinear interpolation -----
 ## ------------------------------------------ ##
 feisty_stack <- rast(annual_list_native) # annual feisty data
 
 zooms <- rast("raw/zoomss_gfdl-esm4_nobasd_historical_nat_default_tcb_global_annual_1950_2014.nc")
 names(zooms)
 crs(zooms)
+res(zooms)
+
+zoomss <- nc_open("raw/zoomss_gfdl-esm4_nobasd_historical_nat_default_tcb_global_annual_1950_2014.nc")
+lonzoo <- ncvar_get(zoomss, "lon")
+latzoo <- ncvar_get(zoomss, "lat")
+timezoo <- ncvar_get(zoomss, "time") 
+
+# check grid
+range(lonzoo) # 1 degree spacing ;  -179.5  179.5
+length(lonzoo)
+range(latzoo) # 1 degree spacing ;-89.5  89.5
+length(latzoo)
+
+
 
 feisty_stars <- st_as_stars(feisty_stack) 
 zooms_stars <- st_as_stars(zooms)
 
-feisty_resampled <- st_warp(feisty_stars, #annual time
-                            dest = zooms_stars, 
-                            method = "bilinear", 
-                            use_gdal = TRUE)
+# warp FEISTY to match ZooMSS using bilinear interpolation
+feisty_5deg <- st_warp(feisty_stars, #annual time; another opt resample() fnction
+                       dest = zooms_stars, 
+                       method = "bilinear", 
+                       use_gdal = TRUE)
+
+plot(feisty_5deg[,,,1], main = "FEISTY Year 1950 (Warped to ZooMSS Grid)")
 
 
-#spatial aggregate
-src_resampled <- st_warp(src_nc_annual, dest = target_nc, method = "bilinear")
-ecocean_5deg <- st_warp(src = ecocean, dest = zooms, method = "average")
-nnual_weighted_means <- lapply(1:dim(src_resampled)[3], function(i) {
+## ------------------------------------------ ##
+#    2) Spatial aggregation -----
+## ------------------------------------------ ##
+
+annual_weighted_means <- lapply(1:dim(src_resampled)[3], function(i) {
   exact_extract(src_resampled[,,,i], shape, 'weighted_mean')
 })
 
