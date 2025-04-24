@@ -4,23 +4,19 @@
 #############     Climate Change Ecology Class     #############################
 ## by: Alexandra Cabanelas 
 ################################################################################
+# FEISTY data downloaded from ISIMIP repository on 24-APR-25
 
 ## ------------------------------------------ ##
 #            Packages -----
 ## ------------------------------------------ ##
 library(ncdf4) #to open netcdf
-#library(raster) #for brick()
-#library(ocedata) #for plot()
 library(tidyverse)
-#library(easyNCDF)
 library(lubridate)
 library(terra) # for bilinear interpolation
-library(gganimate)
-library(ggOceanMaps)
-library(rnaturalearth)
-library(gifski)
 library(sf)
 library(stars)
+library(gganimate)
+library(gifski)
 
 ## ------------------------------------------ ##
 #            Data -----
@@ -40,11 +36,14 @@ feisty$var$tcb
 lon <- ncvar_get(feisty, "lon")     # 360
 lat <- ncvar_get(feisty, "lat")     # 180
 time <- ncvar_get(feisty, "time")   # 780
+
+ncatt_get(feisty, "time", "units")$value # "months since 1601-01-01"
 years <- floor(1601 + time / 12) 
+table(floor(years))
 
 annual_list_native <- list()
 
-for (yr in unique(years)) { #table(floor(years))
+for (yr in unique(years)) { 
   message("Processing year: ", yr)
   
   idx <- which(years == yr)
@@ -52,36 +51,31 @@ for (yr in unique(years)) { #table(floor(years))
   monthly_stack <- lapply(idx, function(i) {
     slice <- ncvar_get(feisty, "tcb", start = c(1, 1, i), count = c(-1, -1, 1))
     slice[slice > 1e19] <- NA  
-    rast(slice)
+    slice_t <- t(slice) #slice[, rev(seq_along(lat))]
+      ## t(slice) needed bc NetCDF == [longitude, latitude]
+      ##                    terra:rast == [latiude, longitude]
+    rast(slice_t) # convert 2D matrix to SpatRaster 
   })
   
-  r_stack <- rast(monthly_stack)
-  ext(r_stack) <- c(min(lon), max(lon), min(lat), max(lat))
-  crs(r_stack) <- "EPSG:4326"
+  # combine the list of monthly rasters into a single SpatRaster stack
+  r_stack <- rast(monthly_stack) 
   
-  # flip lat
-  r_stack <- flip(r_stack, direction = "vertical")
+  ext(r_stack) <- ext(min(lon), max(lon), min(lat), max(lat))
+  crs(r_stack) <- "EPSG:4326"
   
   # mean across 12 months
   r_mean <- app(r_stack, mean, na.rm = TRUE)
 
   annual_list_native[[as.character(yr)]] <- r_mean
 }
+#sanity check
+plot(annual_list_native[["2000"]], main = "FEISTY Biomass — Year 2000")
 
-
-# Get variable names
-var_name <- names(ecocean$var)[1]
-# Read in the variables
-data_array <- ncvar_get(ecocean, var_name)
-# Read time units and convert to dates
-time_units <- ncatt_get(ecocean, "time", "units")$value
-time_origin <- sub(".*since ", "", time_units)
-time_dates <- as.Date(time, origin = time_origin)
 
 ## ------------------------------------------ ##
 #    2) Spatial aggregation -----
 ## ------------------------------------------ ##
-feisty_stack <- rast(annual_list_native) 
+feisty_stack <- rast(annual_list_native) # annual feisty data
 
 zooms <- rast("raw/zoomss_gfdl-esm4_nobasd_historical_nat_default_tcb_global_annual_1950_2014.nc")
 names(zooms)
