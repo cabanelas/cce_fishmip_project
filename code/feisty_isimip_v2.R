@@ -18,8 +18,8 @@ library(sf) #v1.0.15
 library(stars) #v0.6.2
 library(exactextractr) #v0.10.0
 
-library(gganimate) #v1.0.8
-library(gifski) #v1.32.0.2
+#library(gganimate) #v1.0.8
+#library(gifski) #v1.32.0.2
 
 ## ------------------------------------------ ##
 #            Data -----
@@ -31,7 +31,7 @@ feisty <- nc_open("raw/feisty_gfdl-esm4_nobasd_historical_nat_default_tcb_global
 ## ------------------------------------------ ##
 print(feisty)
 names(feisty$var)  
-feisty$var$tcb
+#feisty$var$tcb
 dim(ncvar_get(feisty, "tcb"))
 
 ## ------------------------------------------ ##
@@ -75,11 +75,131 @@ for (yr in unique(years)) {
 
   annual_list_native[[as.character(yr)]] <- r_mean
 }
+
 #sanity check
 plot(annual_list_native[["2000"]], main = "FEISTY Biomass — Year 2000")
 
 feisty_stack <- rast(annual_list_native) # annual feisty data
 
+## ------------------------------------------ ##
+#    2) LMEs -----
+## ------------------------------------------ ##
+lme <- st_read("raw/lme66/LME66.shp")
+
+names(lme)
+head(lme)
+
+# we are using LME #s
+## 10 = Hawaii
+## 14 = Patagonian Shelf
+## 21 = Norwegian Shelf
+## 28 = Guinea Current 
+
+lme_patagonia <- lme %>% 
+  filter(LME_NUMBER %in% c(14))
+
+patagonia_mean <- lapply(1:nlyr(feisty_stack), function(i) {
+  exact_extract(feisty_stack[[i]], lme_patagonia, 
+                fun = 'weighted_mean', weights = "area")
+})
+
+####################
+# 2a) All 66 LMEs - loop -----
+####################
+
+# empty list
+lme_results <- vector("list", length = nrow(lme))
+
+library(Hmisc)  # for wtd.quantile
+
+for (i in seq_len(nrow(lme))) {
+  message("Processing LME: ", lme$LME_NAME[i])
+  
+  lme_poly <- lme[i, ]  # single LME
+  
+  extracted_data <- lapply(1:nlyr(feisty_stack), function(j) {
+    exact_extract(feisty_stack[[j]], lme_poly)
+  })
+  
+  # weighted stats
+  processed_stats <- lapply(extracted_data, function(df_list) {
+    df <- df_list[[1]] # extract actual data.frame
+    
+    df <- df[!is.na(df$value) & !is.nan(df$value), ]  # clean
+    
+    if (nrow(df) > 0 && all(c("value", "coverage_fraction") %in% names(df))) {
+      mean_val <- weighted.mean(df$value, df$coverage_fraction, na.rm = TRUE)
+      median_val <- Hmisc::wtd.quantile(df$value, df$coverage_fraction, probs = 0.5, na.rm = TRUE)
+      var_val <- sum(df$coverage_fraction * (df$value - mean_val)^2) / sum(df$coverage_fraction)
+      sd_val <- sqrt(var_val)
+      
+      list(mean = mean_val, median = median_val, sd = sd_val)
+    } else {
+      list(mean = NA, median = NA, sd = NA)
+    }
+  })
+  
+  lme_results[[i]] <- tibble(
+    LME_NUMBER = lme$LME_NUMBER[i],
+    LME_NAME = lme$LME_NAME[i],
+    year = 1950:2014,
+    tcb_mean = sapply(processed_stats, `[[`, "mean"),
+    tcb_median = sapply(processed_stats, `[[`, "median"),
+    tcb_sd = sapply(processed_stats, `[[`, "sd")
+  )
+}
+
+lme_all_df <- bind_rows(lme_results)
+head(lme_all_df)
+
+## ------------------------------------------ ##
+#    3) Plot -----
+## ------------------------------------------ ##
+tcb_by_lme <- lme_all_df %>%
+  filter(LME_NUMBER %in% c(10, 14, 21, 28))
+
+colnames(tcb_by_lme) <- c("LME", "LME_name", "Year", "TCB_mean", 
+                          "TCB_median", "TCB_sd")
+
+(p <- ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean)) +
+  geom_ribbon(aes(ymin = TCB_mean - TCB_sd, ymax = TCB_mean + TCB_sd, fill = LME), 
+              alpha = 0.2) +
+  geom_line(aes(color = LME), size = 1) +
+  facet_wrap(~ LME_name, ncol = 2, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Annual Total Community Biomass (Mean ± 1 SD)\nFEISTY",
+    x = "Year", y = expression("TCB (g/m"^2*")")
+  ) +
+  #ylim(-100, 50)+
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    strip.text = element_text(size = 13, face = "bold"),  
+    axis.title.x = element_text(size = 14, face = "bold"),  
+    axis.title.y = element_text(size = 15, face = "bold"), 
+    axis.text.x = element_text(size = 12, color = "black"),  
+    axis.text.y = element_text(size = 12, color = "black")   
+  )
+)
+
+ggsave("plot_pub_quality.png", plot = p, width = 10, height = 8, dpi = 300,
+       bg = "white")
+
+#write.csv(tcb_by_lme, "output/FEISTY_tcb_by_lme.csv")
+
+## ------------------------------------------ ##
+#   THE END 
+## ------------------------------------------ ##
+
+
+
+
+
+
+## ------------------------------------------ ##
+#   DID NOT DO -- CODE BELOW IF REGRID NEEDED 
+## ------------------------------------------ ##
 ## ------------------------------------------ ##
 #    2) ReGrid : bilinear interpolation ----- not needed, skip to 3
 ## ------------------------------------------ ##
@@ -115,36 +235,9 @@ feisty_5deg <- st_warp(feisty_stars, #annual time; another opt resample() fnctio
 plot(feisty_5deg[,,,1], main = "FEISTY Year 1950 (Warped to ZooMSS Grid)")
 #still one degree
 
-## ------------------------------------------ ##
-#    3) LMEs -----
-## ------------------------------------------ ##
-lme <- st_read("raw/lme66/LME66.shp")
 
-names(lme)
-head(lme)
+###ORIGINAL loop
 
-# we are using LME #s
-## 10 = Hawaii
-## 14 = Patagonian Shelf
-## 21 = Norwegian Shelf
-## 28 = Guinea Current 
-
-lme_patagonia <- lme %>% 
-  filter(LME_NUMBER %in% c(14))
-
-patagonia_mean <- lapply(1:nlyr(feisty_stack), function(i) {
-  exact_extract(feisty_stack[[i]], lme_patagonia, 
-                fun = 'weighted_mean', weights = "area")
-})
-annual_weighted_means <- lapply(1:dim(src_resampled)[3], function(i) {
-  exact_extract(src_resampled[,,,i], shape, 'weighted_mean')
-})
-
-####################
-# 3a) All 66 LMEs - loop -----
-####################
-# empty list
-lme_results <- vector("list", length = nrow(lme))
 
 for (i in seq_len(nrow(lme))) {
   message("Processing LME: ", lme$LME_NAME[i])
@@ -165,100 +258,3 @@ for (i in seq_len(nrow(lme))) {
 }
 
 lme_all_df <- bind_rows(lme_results)
-
-
-####################################################
-############# TRYING TO MAKE LOOPS THAT ALSO CALC MEDIAN AND SD
-### STILL TROUBLESHOOTNG
-library(Hmisc)  # for wtd.quantile
-
-lme_results <- vector("list", length = nrow(lme))
-
-for (i in seq_len(nrow(lme))) {
-  message("Processing LME: ", lme$LME_NAME[i])
-  
-  lme_poly <- lme[i, ]  # single LME
-  
-  extracted_data <- lapply(1:nlyr(feisty_stack), function(j) {
-    exact_extract(feisty_stack[[j]], lme_poly)
-  })
-  
-  # Weighted stats
-  processed_stats <- lapply(extracted_data, function(df_list) {
-    df <- df_list[[1]]  # extract actual data.frame
-    
-    df <- df[!is.na(df$value) & !is.nan(df$value), ]  # clean
-    
-    if (nrow(df) > 0 && all(c("value", "coverage_fraction") %in% names(df))) {
-      mean_val <- weighted.mean(df$value, df$coverage_fraction, na.rm = TRUE)
-      median_val <- Hmisc::wtd.quantile(df$value, df$coverage_fraction, probs = 0.5, na.rm = TRUE)
-      var_val <- sum(df$coverage_fraction * (df$value - mean_val)^2) / sum(df$coverage_fraction)
-      sd_val <- sqrt(var_val)
-      
-      list(mean = mean_val, median = median_val, sd = sd_val)
-    } else {
-      list(mean = NA, median = NA, sd = NA)
-    }
-  })
-  
-  lme_results[[i]] <- tibble(
-    LME_NUMBER = lme$LME_NUMBER[i],
-    LME_NAME = lme$LME_NAME[i],
-    year = 1950:2014,
-    tcb_mean = sapply(processed_stats, `[[`, "mean"),
-    tcb_median = sapply(processed_stats, `[[`, "median"),
-    tcb_sd = sapply(processed_stats, `[[`, "sd")
-  )
-}
-
-lme_all_df2 <- bind_rows(lme_results)
-
-
-
-####################
-# this one doesnt "weigh" the median and SD
-####################
-lme_results <- vector("list", length = nrow(lme))
-
-for (i in seq_len(nrow(lme))) {
-  message("Processing LME: ", lme$LME_NAME[i])
-  
-  lme_poly <- lme[i, ]  # single LME as sf
-  
-  # Custom function for weighted mean
-  weighted_mean_fun <- function(values, coverage_fractions) {
-    if (length(values) > 0 && length(coverage_fractions) > 0) {
-      sum(values * coverage_fractions, na.rm = TRUE) / sum(coverage_fractions, na.rm = TRUE)
-    } else {
-      NA
-    }
-  }
-  
-  # Extract values using exact_extract with custom functions
-  tcb_mean <- lapply(1:nlyr(feisty_stack), function(j) {
-    exact_extract(feisty_stack[[j]], lme_poly, fun = weighted_mean_fun)
-  })
-  
-  tcb_median <- lapply(1:nlyr(feisty_stack), function(j) {
-    exact_extract(feisty_stack[[j]], lme_poly, fun = function(values, coverage_fractions) median(values, na.rm = TRUE))
-  })
-  
-  tcb_sd <- lapply(1:nlyr(feisty_stack), function(j) {
-    exact_extract(feisty_stack[[j]], lme_poly, fun = function(values, coverage_fractions) sd(values, na.rm = TRUE))
-  })
-  
-  # Store results
-  lme_results[[i]] <- tibble(
-    LME_NUMBER = lme$LME_NUMBER[i],
-    LME_NAME = lme$LME_NAME[i],
-    year = 1950:2014,
-    tcb_mean = unlist(tcb_mean),
-    tcb_median = unlist(tcb_median),
-    tcb_sd = unlist(tcb_sd)
-  )
-}
-
-lme_all_df3 <- bind_rows(lme_results)
-
-
-## RESULTS ARE FAIRLY DIFFERENT FOR SOME .. mainly for LME 61 and LME 8
