@@ -12,7 +12,11 @@ library(raster)
 library(exactextractr) #v0.10.0
 library(gganimate) #v1.0.8
 library(gifski) #v1.32.0.
-library(SpatRaster)
+# library(SpatRaster)
+library(reshape2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(viridis)
 
 # open NetDC file
 ecocean <- nc_open("/Users/kjehickman/Documents/Classes/Spring_25/7-430_CCData/ccecology_final_project/ecoocean_gfdl-esm4_nobasd_historical_nat_default_tcb_global_monthly_1950_2014.nc")
@@ -106,7 +110,6 @@ writeRaster(ecocean_resampled, filename = "ecocean_annual_5deg.nc", format = "CD
 
 # read in spatially & temporally aggregated CDF as Raster
 ecocean_full <- brick("ecocean_annual_5deg.nc")
-
 names(lme)
 head(lme)
 
@@ -160,7 +163,6 @@ ts_28 <- extract_lme_timeseries(ecocean_full, lme_subset %>% filter(LME_NUMBER =
 # binda all LME output into df
 tcb_by_lme <- bind_rows(ts_10, ts_14, ts_21, ts_28)
 
-# # Plot masked result
 summary(tcb_by_lme$TCB_mean)
 tcb_by_lme <- tcb_by_lme %>% 
   mutate(LME_name = case_when(LME == 10 ~ "HOTS",
@@ -169,7 +171,9 @@ tcb_by_lme <- tcb_by_lme %>%
                    TRUE ~ "Guinean Current"))
 
 # export to csv
+write.csv(tcb_by_lme,"ecoocean.csv", row.names = FALSE)
 
+# Plotting ####
 ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean)) +
   geom_ribbon(aes(ymin = TCB_mean - TCB_sd, ymax = TCB_mean + TCB_sd, fill = LME), alpha = 0.2) +
   geom_line(aes(color = LME), size = 1) +
@@ -184,7 +188,44 @@ ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean)) +
 
 # graph map of 2014 - 1950 to show difference over time
   # use the CDF for this
+ecocean_full_cdf <- nc_open("ecocean_annual_5deg.nc")
+str(ecocean_full_cdf)
 
+# Extract variables
+lon <- ecocean_full_cdf$dim$longitude$vals  # 360 longitudes
+lat <- ecocean_full_cdf$dim$latitude$vals   # 180 latitudes
+
+# Extract consumer biomass across all time (66 years)
+biomass <- ncdf4::ncvar_get(ecocean_full_cdf, "variable")  # 3D: lon x lat x time
+
+# Check shape to be sure: dim(biomass) should be 360 x 180 x 66
+dim(biomass) # lon, lat, time
+
+# Extract first (1950) and last (2014) time steps
+biomass_1950 <- biomass[, , 1]
+biomass_2014 <- biomass[, , 65]  # 65 if starting from index 1 for 1950
+
+# Calculate the difference (2014 - 1950)
+biomass_diff <- biomass_1950 - biomass_2014 # many NAs...
+
+# Prepare data for plotting
+# Convert 2D matrix to long-format dataframe
+diff_df <- melt(biomass_diff)
+colnames(diff_df) <- c("lon_index", "lat_index", "diff")
+
+# Add actual coordinates
+diff_df$lon <- lon[diff_df$lon_index]
+diff_df$lat <- lat[diff_df$lat_index]
+
+# Plotting
+ggplot(diff_df, aes(x = lon, y = lat, fill = diff)) +
+  geom_raster(interpolate = FALSE) +
+  scale_fill_viridis(option = "plasma", na.value = "grey80", name = "Δ Biomass (g m-2)") +
+  borders("world", colour = "black", fill = NA, size = 0.3) +
+  coord_fixed(1.3) +
+  labs(title = "EcoOcean: Change in Total Consumer Biomass (1950 - 2014)",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
 
 # Clean up
 nc_close(ecocean)
@@ -202,7 +243,7 @@ nc_close(ecocean_out)
   # Alex: gif of most interesting LME, 3 panels 1 for each 
     # LME of interest is either 14 or 21 (shelves)
   # ?: for case study, show static time difference for case study LME
-  # subtract 2014 from 1950 and show on a map for each model
+  # All: show tcb of 1950 - 2014 and show on a global map for each model
 
 
 
