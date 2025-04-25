@@ -78,12 +78,11 @@ for (yr in unique(years)) {
 #sanity check
 plot(annual_list_native[["2000"]], main = "FEISTY Biomass — Year 2000")
 
+feisty_stack <- rast(annual_list_native) # annual feisty data
 
 ## ------------------------------------------ ##
 #    2) ReGrid : bilinear interpolation ----- not needed, skip to 3
 ## ------------------------------------------ ##
-feisty_stack <- rast(annual_list_native) # annual feisty data
-
 zooms <- rast("raw/zoomss_gfdl-esm4_nobasd_historical_nat_default_tcb_global_annual_1950_2014.nc")
 names(zooms)
 crs(zooms)
@@ -168,3 +167,98 @@ for (i in seq_len(nrow(lme))) {
 lme_all_df <- bind_rows(lme_results)
 
 
+####################################################
+############# TRYING TO MAKE LOOPS THAT ALSO CALC MEDIAN AND SD
+### STILL TROUBLESHOOTNG
+library(Hmisc)  # for wtd.quantile
+
+lme_results <- vector("list", length = nrow(lme))
+
+for (i in seq_len(nrow(lme))) {
+  message("Processing LME: ", lme$LME_NAME[i])
+  
+  lme_poly <- lme[i, ]  # single LME
+  
+  extracted_data <- lapply(1:nlyr(feisty_stack), function(j) {
+    exact_extract(feisty_stack[[j]], lme_poly)
+  })
+  
+  # Weighted stats
+  processed_stats <- lapply(extracted_data, function(df_list) {
+    df <- df_list[[1]]  # extract actual data.frame
+    
+    df <- df[!is.na(df$value) & !is.nan(df$value), ]  # clean
+    
+    if (nrow(df) > 0 && all(c("value", "coverage_fraction") %in% names(df))) {
+      mean_val <- weighted.mean(df$value, df$coverage_fraction, na.rm = TRUE)
+      median_val <- Hmisc::wtd.quantile(df$value, df$coverage_fraction, probs = 0.5, na.rm = TRUE)
+      var_val <- sum(df$coverage_fraction * (df$value - mean_val)^2) / sum(df$coverage_fraction)
+      sd_val <- sqrt(var_val)
+      
+      list(mean = mean_val, median = median_val, sd = sd_val)
+    } else {
+      list(mean = NA, median = NA, sd = NA)
+    }
+  })
+  
+  lme_results[[i]] <- tibble(
+    LME_NUMBER = lme$LME_NUMBER[i],
+    LME_NAME = lme$LME_NAME[i],
+    year = 1950:2014,
+    tcb_mean = sapply(processed_stats, `[[`, "mean"),
+    tcb_median = sapply(processed_stats, `[[`, "median"),
+    tcb_sd = sapply(processed_stats, `[[`, "sd")
+  )
+}
+
+lme_all_df2 <- bind_rows(lme_results)
+
+
+
+####################
+# this one doesnt "weigh" the median and SD
+####################
+lme_results <- vector("list", length = nrow(lme))
+
+for (i in seq_len(nrow(lme))) {
+  message("Processing LME: ", lme$LME_NAME[i])
+  
+  lme_poly <- lme[i, ]  # single LME as sf
+  
+  # Custom function for weighted mean
+  weighted_mean_fun <- function(values, coverage_fractions) {
+    if (length(values) > 0 && length(coverage_fractions) > 0) {
+      sum(values * coverage_fractions, na.rm = TRUE) / sum(coverage_fractions, na.rm = TRUE)
+    } else {
+      NA
+    }
+  }
+  
+  # Extract values using exact_extract with custom functions
+  tcb_mean <- lapply(1:nlyr(feisty_stack), function(j) {
+    exact_extract(feisty_stack[[j]], lme_poly, fun = weighted_mean_fun)
+  })
+  
+  tcb_median <- lapply(1:nlyr(feisty_stack), function(j) {
+    exact_extract(feisty_stack[[j]], lme_poly, fun = function(values, coverage_fractions) median(values, na.rm = TRUE))
+  })
+  
+  tcb_sd <- lapply(1:nlyr(feisty_stack), function(j) {
+    exact_extract(feisty_stack[[j]], lme_poly, fun = function(values, coverage_fractions) sd(values, na.rm = TRUE))
+  })
+  
+  # Store results
+  lme_results[[i]] <- tibble(
+    LME_NUMBER = lme$LME_NUMBER[i],
+    LME_NAME = lme$LME_NAME[i],
+    year = 1950:2014,
+    tcb_mean = unlist(tcb_mean),
+    tcb_median = unlist(tcb_median),
+    tcb_sd = unlist(tcb_sd)
+  )
+}
+
+lme_all_df3 <- bind_rows(lme_results)
+
+
+## RESULTS ARE FAIRLY DIFFERENT FOR SOME .. mainly for LME 61 and LME 8
