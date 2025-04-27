@@ -163,6 +163,7 @@ tcb_by_lme <- lme_all_df %>%
 
 colnames(tcb_by_lme) <- c("LME", "LME_name", "Year", "TCB_mean", 
                           "TCB_median", "TCB_sd")
+#write.csv(tcb_by_lme, "output/FEISTY_tcb_by_lme.csv")
 
 (p <- ggplot(tcb_by_lme, aes(x = Year, y = TCB_mean)) +
   geom_ribbon(aes(ymin = TCB_mean - TCB_sd, ymax = TCB_mean + TCB_sd, fill = LME), 
@@ -172,7 +173,7 @@ colnames(tcb_by_lme) <- c("LME", "LME_name", "Year", "TCB_mean",
   theme_minimal() +
   labs(
     title = "Annual Total Community Biomass (Mean ± 1 SD)\nFEISTY",
-    x = "Year", y = expression("TCB (g/m"^2*")")
+    x = "Year", y = expression("Mean TCB (g/m"^2*")")
   ) +
   #ylim(-100, 50)+
   theme(
@@ -189,10 +190,116 @@ colnames(tcb_by_lme) <- c("LME", "LME_name", "Year", "TCB_mean",
 #ggsave("plot_FEISTY_4LMEtcb_line.png", plot = p, width = 10, height = 8, dpi = 300,
 #       bg = "white")
 
-#write.csv(tcb_by_lme, "output/FEISTY_tcb_by_lme.csv")
+## plot median by LME
+(pMedian <- ggplot(tcb_by_lme, aes(x = Year, y = TCB_median)) +
+    geom_line(aes(color = LME), size = 1) +
+    facet_wrap(~ LME_name, ncol = 2, scales = "free_y") +
+    theme_minimal() +
+    labs(
+      title = "Median Total Community Biomass\nFEISTY",
+      x = "Year", y = expression("Median TCB (g/m"^2*")")
+    ) +
+    #ylim(-100, 50)+
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+      strip.text = element_text(size = 13, face = "bold"),  
+      axis.title.x = element_text(size = 14, face = "bold"),  
+      axis.title.y = element_text(size = 15, face = "bold"), 
+      axis.text.x = element_text(size = 12, color = "black"),  
+      axis.text.y = element_text(size = 12, color = "black")   
+    )
+)
+#ggsave("plot_FEISTY_4LMEtcbMEDIAN_line.png", plot = pMedian, width = 10, height = 8, dpi = 300,
+#       bg = "white")
+
+(pMediantog <- ggplot(tcb_by_lme, aes(x = Year, y = TCB_median), group = LME_name) +
+  geom_line(aes(color = LME_name), size = 1) +
+  theme_minimal() +
+  labs(
+    title = "Median Total Community Biomass\nFEISTY",
+    x = "Year", y = expression("Median TCB (g/m"^2*")")
+  ) +
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  
+    axis.title.x = element_text(size = 14, face = "bold"),  
+    axis.title.y = element_text(size = 15, face = "bold"), 
+    axis.text.x = element_text(size = 12, color = "black"),  
+    axis.text.y = element_text(size = 12, color = "black")   
+  )
+)
+#ggsave("plot_FEISTY_4LMEtcbMEDIAN_together.png", plot = pMediantog, width = 10, height = 8, dpi = 300,
+#       bg = "white")
 
 ## ------------------------------------------ ##
-#   THE END 
+#   Caterpillar plot 
+## ------------------------------------------ ##
+lme1 <- st_make_valid(lme)
+
+# Extract the latitude of the centroid of each LME (central latitude)
+lme1 <- lme1 %>%
+  mutate(lat = st_coordinates(st_centroid(geometry))[, 2])
+
+#lme_sorted <- lme1 %>% arrange(lat)
+lme_sorted <- lme1 %>% 
+  arrange(desc(lat)) %>%
+  mutate(position = row_number()) %>%
+  select(LME_NUMBER, LME_NAME, position, lat)
+
+lme_all_df1 <- left_join(lme_all_df, lme_sorted, by = c("LME_NUMBER", "LME_NAME"))
+
+(catplot <- ggplot(lme_all_df1, aes(x = tcb_mean , y = reorder(LME_NAME, -position))) +
+    geom_point() +  # Plot the mean
+    geom_errorbarh(aes(xmin = tcb_mean - tcb_sd,
+                       xmax = tcb_mean + tcb_sd), height = 0) +  
+    labs(
+      title = "FEISTY TCB (Mean ± 1 SD) 1950-2014",
+      x = expression("TCB (g/m"^2*")"),
+      y = NULL
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(size = 12, color = "black"),
+      axis.title.x = element_text(size = 12),
+      plot.title = element_text(size = 14, hjust = 0.5)
+    ) 
+)
+#ggsave("plot_FEISTY_caterpillar.png", plot = catplot, width = 8, height = 10, dpi = 300, bg = "white")
+
+# animated version
+(catplotanimate <- ggplot(lme_all_df1, aes(x = tcb_mean, 
+                                           y = reorder(LME_NAME, -position))) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = tcb_mean - tcb_sd,
+                     xmax = tcb_mean + tcb_sd), height = 0) +
+  labs(
+    title = "FEISTY TCB (Mean ± 1 SD) {frame_time}",
+    x = bquote("TCB (g/m"^2*")"),
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title.x = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5)
+  ) +
+  gganimate::transition_time(year) + 
+  gganimate::ease_aes('linear')
+)
+
+catplot_anim <- gganimate::animate(catplotanimate, fps = 10, #frames per second
+                                  width = 1600, 
+                                  height = 1200, 
+                                  res = 150, 
+                                  renderer = gganimate::gifski_renderer())
+
+gganimate::anim_save("catplotanimateFEISTY.gif", animation = catplot_anim)
+
+## ------------------------------------------ ##
+#   NES plot
 ## ------------------------------------------ ##
 tcb_nes <- lme_all_df %>%
   filter(LME_NAME %in% c("Northeast U.S. Continental Shelf"))
@@ -222,38 +329,16 @@ colnames(tcb_nes) <- c("LME", "LME_name", "Year", "TCB_mean",
 )
 #ggsave("FEISTY_NES_isimipdata.png", plot = nesp, width = 10, height = 6, dpi = 300, bg = "white")
 
-# caterpillar plot 
-lme1 <- st_make_valid(lme)
 
-# Extract the latitude of the centroid of each LME (central latitude)
-lme1 <- lme1 %>%
-  mutate(lat = st_coordinates(st_centroid(geometry))[, 2])
 
-#lme_sorted <- lme1 %>% arrange(lat)
-lme_sorted <- lme1 %>% 
-  arrange(desc(lat)) %>%
-  mutate(position = row_number()) %>%
-  select(LME_NUMBER, LME_NAME, position, lat)
+## ------------------------------------------ ##
+#   THE END 
+## ------------------------------------------ ##
 
-lme_all_df1 <- left_join(lme_all_df, lme_sorted, by = c("LME_NUMBER", "LME_NAME"))
 
-(catplot <- ggplot(lme_all_df1, aes(x = tcb_mean , y = reorder(LME_NAME, -position))) +
-  geom_point() +  # Plot the mean
-  geom_errorbarh(aes(xmin = tcb_mean - tcb_sd,
-                     xmax = tcb_mean + tcb_sd), height = 0) +  
-  labs(
-    title = "FEISTY TCB (Mean ± 1 SD) 1950-2014",
-    x = expression("TCB (g/m"^2*")"),
-    y = NULL
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.y = element_text(size = 12, color = "black"),
-    axis.title.x = element_text(size = 12),
-    plot.title = element_text(size = 14, hjust = 0.5)
-  ) 
-)
-#ggsave("plot_FEISTY_caterpillar.png", plot = catplot, width = 8, height = 10, dpi = 300, bg = "white")
+
+
+
 
 ## ------------------------------------------ ##
 #   DID NOT DO -- CODE BELOW IF REGRID NEEDED 
