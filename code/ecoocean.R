@@ -6,6 +6,7 @@ library(lubridate)
 library(sf)
 library(stars)
 library(dplyr)
+library(tidyverse)
 library(exactextractr)
 library(PCICt)
 library(raster)
@@ -217,8 +218,8 @@ colnames(diff_df) <- c("lon_index", "lat_index", "diff")
 diff_df$lon <- lon[diff_df$lon_index]
 diff_df$lat <- lat[diff_df$lat_index]
 
-# Plotting
-ggplot(diff_df, aes(x = lon, y = lat, fill = diff)) +
+# plot tcb difference globally
+tcb_diff <- ggplot(diff_df, aes(x = lon, y = lat, fill = diff)) +
   geom_raster(interpolate = FALSE) +
   scale_fill_viridis(option = "plasma", na.value = "grey80", name = "Δ Biomass (g m-2)") +
   borders("world", colour = "black", fill = NA, size = 0.3) +
@@ -226,6 +227,73 @@ ggplot(diff_df, aes(x = lon, y = lat, fill = diff)) +
   labs(title = "EcoOcean: Change in Total Consumer Biomass (1950 - 2014)",
        x = "Longitude", y = "Latitude") +
   theme_minimal()
+ggsave(filename = paste0("EcoOcean_tcb_diff.png"), plot = tcb_diff, width = 16, height = 12)
+
+# plot tcb over time for all 3 models
+  # EcoOcean
+ecocean_csv <- read_csv("/Users/kjehickman/Documents/Classes/Spring_25/7-430_CCData/ccecology_final_project/cce_fishmip_project/data/ecoocean.csv")
+  # ZooMMS
+zoomss_csv <- read_csv("/Users/kjehickman/Documents/Classes/Spring_25/7-430_CCData/ccecology_final_project/cce_fishmip_project/data/ZooMSS.csv")
+  # FEISTY
+feisty_csv <- read_csv("/Users/kjehickman/Documents/Classes/Spring_25/7-430_CCData/ccecology_final_project/cce_fishmip_project/data/FEISTY_tcb_by_lme.csv")
+str(feisty_csv)
+class(ecocean_csv)
+
+# wrangle data
+ecocean_clean <- ecocean_csv %>%
+  dplyr::mutate(Model = "EcoOcean") %>% 
+  dplyr::select(Year, TCB_mean, TCB_sd, LME, LME_name, Model)
+
+zoomss_clean <- zoomss_csv %>%
+  dplyr::mutate(Model = "ZooMSS",
+                LME_name = case_when(LME == 10 ~ "HOTS",
+                                     LME == 14 ~ "Patagonian Shelf",
+                                     LME == 21 ~ "Norwegian Shelf",
+                                     TRUE ~ "Guinean Current")) %>%
+  dplyr::select(Year, TCB_mean, TCB_sd, LME, LME_name, Model)
+
+feisty_clean <- feisty_csv %>%
+  dplyr::mutate(Model = "FEISTY") %>%
+  dplyr::select(Year, TCB_mean, TCB_sd, LME, LME_name, Model)
+
+# combine into one dataframe
+combined_tcb <- bind_rows(ecocean_clean, zoomss_clean, feisty_clean)
+
+
+# make lines for each model, facet wrap by LME
+  # fix LME names
+combined_tcb$LME_name %>% unique()
+
+combined_tcb <- combined_tcb %>%
+  mutate(
+    LME_name = recode(
+      LME_name,
+      "HOTS" = "Insular Pacific-Hawaiian",
+      "Norwegian Sea" = "Norwegian Shelf",
+      "Guinean Current" = "Guinea Current"
+    )
+  )
+
+tcb_intercomp <- ggplot(combined_tcb, aes(x = Year, y = TCB_mean, color = Model, fill = Model)) +
+  geom_ribbon(aes(ymin = TCB_mean - TCB_sd, ymax = TCB_mean + TCB_sd),
+              alpha = 0.2, color = NA) +
+  geom_line(size = 1) +
+  facet_wrap(~LME_name, ncol = 2, scales = "free_y") +
+  theme_bw() +
+  labs(
+    title = "Annual Total Consumer Biomass Intercomparison (Mean ± 1 SD) by LME",
+    x = "Year", y = "Total Consumer Biomass (TCB)"
+  ) +
+  scale_color_manual(values = c("EcoOcean" = "#1f77b4", "ZooMSS" = "#2ca02c", "FEISTY" = "#d62728")) +
+  scale_fill_manual(values = c("EcoOcean" = "#1f77b4", "ZooMSS" = "#2ca02c", "FEISTY" = "#d62728")) +
+  theme(legend.position = "bottom", 
+        axis.text=element_text(size=12),
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=12, face="bold"),
+        axis.title=element_text(size=14,face="bold"),
+        plot.title=element_text(size=16,face="bold"))
+ggsave(filename = paste0("/Users/kjehickman/Documents/Classes/Spring_25/7-430_CCData/ccecology_final_project/cce_fishmip_project/figures/all_lme_tcb.png"), plot = tcb_intercomp, width = 16, height = 12)
+
 
 # Clean up
 nc_close(ecocean)
